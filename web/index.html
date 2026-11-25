@@ -21,9 +21,23 @@ main{max-width:none}section{grid-template-columns:minmax(0,1fr) minmax(220px,300
 .board.flat .token::before{display:none}
 .board.flat .piece-art{filter:drop-shadow(0 0 2px #fff) drop-shadow(0 1px 2px #000)}
 @media(max-width:500px){.name{font-size:clamp(7px,2cqw,10px);padding:1px 2px}.place{font-size:clamp(6px,1.7cqw,10px)}}
-</style><main><h1>Semantic Chess</h1><p>Same game. Same mathematics. Different ontology.</p><div id="status" role="status"></div><section><div class="board" id="board" aria-label="Chessboard"></div><aside><div class="controls"><label>Opponent <select id="opponent"><option value="human">Two players</option><option value="stockfish">Stockfish (Black)</option></select></label><button class="action" id="reset">New game / lottery</button><button class="action" id="mode">Traditional board</button><label>Piece style <select id="pieceStyle"><option value="halo">Raised + halo</option><option value="flat">Raised only</option></select></label><label>Flag names <select id="labels"><option value="always">Always visible</option><option value="hover">Hover / focus</option><option value="none">Hidden</option></select></label></div><div id="seed"></div><h2>Voice control</h2><button class="action" id="listen">🎙 Listen</button><div id="heard" role="status"></div><form id="voiceform"><label for="command">Command preview (e.g. Eva to Japan)</label><input id="command" autocomplete="off"><button class="action" type="submit">Preview move</button></form><button class="action" id="confirm" disabled>Confirm move</button><button class="action" id="retry" hidden>Retry computer move</button><h2>World history</h2><ol id="log"></ol><small>Flags supplied by FlagCDN; internet required for flag artwork.</small></aside></section></main>
+
+[hidden]{display:none!important}
+.board-stage{min-width:0;width:100%;display:flex;justify-content:center}
+.three-stage{position:relative;width:min(100%,max(320px,calc(100dvh - 100px)));aspect-ratio:1;overflow:hidden;border:1px solid #665a46;border-radius:12px;background:radial-gradient(ellipse at center,#303743,#11151d 75%);touch-action:none}
+.three-stage canvas{display:block;width:100%;height:100%;touch-action:none}
+.three-stage .view-help{position:absolute;left:12px;top:10px;pointer-events:none;font-size:12px;color:#e4dbc8;background:#111b;padding:6px 9px;border-radius:5px}
+.three-stage .view-info{position:absolute;left:12px;bottom:10px;right:12px;pointer-events:none;text-align:center;font-size:13px;color:#fff;text-shadow:0 1px 3px #000}
+.three-stage .labels3d{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.label3d{position:absolute;transform:translate(-50%,-50%);background:#151923eb;color:#fff;border:1px solid #ffffff40;padding:2px 4px;border-radius:4px;white-space:nowrap;font-size:clamp(8px,1.3vw,13px);line-height:1.05;text-shadow:0 1px 2px #000}
+.label3d.character{font-weight:700;z-index:2}
+.label3d.country{font-size:clamp(7px,1.15vw,11px);opacity:.9}
+#viewStatus{font-size:12px;color:#e4dbc8;min-height:1em}
+@media(max-width:850px){.three-stage{width:min(100%,calc(100dvh - 90px))}}
+@media(max-width:500px){.three-stage{width:100%}}
+</style><main><h1>Semantic Chess</h1><p>Same game. Same mathematics. Different ontology.</p><div id="status" role="status"></div><section><div class="board-stage"><div class="board" id="board" aria-label="Chessboard"></div><div class="three-stage" id="threeStage" hidden><canvas id="threeCanvas" aria-label="Interactive 3D chessboard; use 2D view for keyboard square selection"></canvas><div class="labels3d" id="threeLabels"></div><div class="view-help">Drag to rotate · Scroll / pinch to zoom</div><div class="view-info" id="threeInfo"></div></div></div><aside><div class="controls"><label>Opponent <select id="opponent"><option value="human">Two players</option><option value="stockfish">Stockfish (Black)</option></select></label><button class="action" id="reset">New game / lottery</button><button class="action" id="mode">Traditional board</button><label>Board view <select id="boardView"><option value="2d">2D overhead</option><option value="3d">3D tabletop</option></select></label><button class="action" id="flip3d" hidden>Flip view</button><button class="action" id="top3d" hidden>Overhead camera</button><button class="action" id="home3d" hidden>Reset camera</button><div id="viewStatus" role="status"></div><label>Piece style <select id="pieceStyle"><option value="halo">Raised + halo</option><option value="flat">Raised only</option></select></label><label>Flag names <select id="labels"><option value="always">Always visible</option><option value="hover">Hover / focus</option><option value="none">Hidden</option></select></label></div><div id="seed"></div><h2>Voice control</h2><button class="action" id="listen">🎙 Listen</button><div id="heard" role="status"></div><form id="voiceform"><label for="command">Command preview (e.g. Eva to Japan)</label><input id="command" autocomplete="off"><button class="action" type="submit">Preview move</button></form><button class="action" id="confirm" disabled>Confirm move</button><button class="action" id="retry" hidden>Retry computer move</button><h2>World history</h2><ol id="log"></ol><small>Flags supplied by FlagCDN; internet required for flag artwork.</small></aside></section></main>
 <script>
-let state, selected=null, busy=false, semantic=true, pending=null;
+let state, selected=null, busy=false, semantic=true, pending=null, threeView=null, viewRequest=0;
 const board=document.querySelector('#board'), status=document.querySelector('#status'), log=document.querySelector('#log');
 const glyph={k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟',K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
 
@@ -47,7 +61,7 @@ function pieceToken(piece,square){
 }
 
 async function request(path,body){const r=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error);return data}
-function render(){pending=null;document.querySelector('#confirm').disabled=true;document.querySelector('#seed').textContent='Lottery seed: '+state.seed;document.querySelector('#retry').hidden=!(state.opponent==='stockfish'&&state.turn==='black'&&!state.result);board.className='board '+(semantic?({hover:'hover-labels',none:'no-labels'}[document.querySelector('#labels').value]||''):'');board.classList.toggle('flat',document.querySelector('#pieceStyle').value==='flat');board.classList.toggle('plain',!semantic);board.replaceChildren();status.textContent=state.result?'Game over: '+state.result:state.turn+' to move'+(state.check?' · Check':'');for(const s of state.squares){const t=document.createElement('button');t.className='tile';t.type='button';t.title=s.square+' · '+s.name+(s.piece?' · '+s.piece.name+' ('+s.piece.capability+')':'');t.setAttribute('aria-label',t.title);const parity=(s.square.charCodeAt(0)-97+Number(s.square[1]))%2;t.style.backgroundColor=parity?'#a78158':'#e2d0ab';if(semantic)t.style.backgroundImage='url(https://flagcdn.com/w320/'+s.code+'.png)';if(selected===s.square)t.classList.add('selected');if(selected&&state.legal.some(m=>m.startsWith(selected+s.square)))t.classList.add('legal');if(s.piece){t.append(pieceToken(s.piece,s.square));if(semantic){const n=document.createElement('span');n.className='name';n.textContent=s.piece.name+(s.piece.self_actualized?' ★':'');t.append(n)}}const label=document.createElement('span');label.className='place';label.textContent=semantic?s.name:s.square;t.append(label);t.onclick=()=>choose(s.square);board.append(t)}log.replaceChildren();for(const e of state.history){const li=document.createElement('li');li.textContent=semantic?e.actor.name+' travels from '+e.origin+' to '+e.destination+(e.captured?', capturing '+e.captured.name:'')+(e.promotion?' · Self-actualized: '+e.promotion:'')+(e.rook?' · '+e.rook.actor.name+' travels to '+e.rook.destination:'')+' ('+e.san+')':e.san;log.append(li)}log.scrollTop=log.scrollHeight}
+function render(){pending=null;document.querySelector('#confirm').disabled=true;document.querySelector('#seed').textContent='Lottery seed: '+state.seed;document.querySelector('#retry').hidden=!(state.opponent==='stockfish'&&state.turn==='black'&&!state.result);board.className='board '+(semantic?({hover:'hover-labels',none:'no-labels'}[document.querySelector('#labels').value]||''):'');board.classList.toggle('flat',document.querySelector('#pieceStyle').value==='flat');board.classList.toggle('plain',!semantic);board.replaceChildren();status.textContent=state.result?'Game over: '+state.result:state.turn+' to move'+(state.check?' · Check':'');for(const s of state.squares){const t=document.createElement('button');t.className='tile';t.type='button';t.title=s.square+' · '+s.name+(s.piece?' · '+s.piece.name+' ('+s.piece.capability+')':'');t.setAttribute('aria-label',t.title);const parity=(s.square.charCodeAt(0)-97+Number(s.square[1]))%2;t.style.backgroundColor=parity?'#a78158':'#e2d0ab';if(semantic)t.style.backgroundImage='url(https://flagcdn.com/w320/'+s.code+'.png)';if(selected===s.square)t.classList.add('selected');if(selected&&state.legal.some(m=>m.startsWith(selected+s.square)))t.classList.add('legal');if(s.piece){t.append(pieceToken(s.piece,s.square));if(semantic){const n=document.createElement('span');n.className='name';n.textContent=s.piece.name+(s.piece.self_actualized?' ★':'');t.append(n)}}const label=document.createElement('span');label.className='place';label.textContent=semantic?s.name:s.square;t.append(label);t.onclick=()=>choose(s.square);board.append(t)}log.replaceChildren();for(const e of state.history){const li=document.createElement('li');li.textContent=semantic?e.actor.name+' travels from '+e.origin+' to '+e.destination+(e.captured?', capturing '+e.captured.name:'')+(e.promotion?' · Self-actualized: '+e.promotion:'')+(e.rook?' · '+e.rook.actor.name+' travels to '+e.rook.destination:'')+' ('+e.san+')':e.san;log.append(li)}log.scrollTop=log.scrollHeight;syncThree()}
 async function choose(s){if(!state||busy||state.result||(state.opponent==='stockfish'&&state.turn==='black'))return;const moves=selected?state.legal.filter(m=>m.startsWith(selected+s)):[];if(moves.length){let move=moves[0];if(moves.length>1){const p=prompt('Self-actualization: q (queen), r (rook), b (bishop), n (knight)','q');if(!p)return;move=moves.find(m=>m[4]===p.toLowerCase());if(!move)return}await submitMove(move)}else{selected=state.legal.some(m=>m.startsWith(s))?s:null;render()}}
 document.querySelector('#reset').onclick=async()=>{if(busy)return;busy=true;try{state=await request('/api/reset',{opponent:document.querySelector('#opponent').value});selected=null;render()}catch(e){status.textContent=e.message}finally{busy=false}};
 document.querySelector('#mode').onclick=e=>{if(!state)return;semantic=!semantic;e.target.textContent=semantic?'Traditional board':'Flag board';render()};
@@ -95,5 +109,31 @@ else{listen.onclick=()=>{const speech=new Speech();speech.lang='en-US';speech.in
  speech.onend=()=>{listen.disabled=false};
  try{speech.start()}catch(e){listen.disabled=false;heard.textContent=e.message}
 }}
+
+const boardView=document.querySelector('#boardView'), stage3d=document.querySelector('#threeStage'), viewStatus=document.querySelector('#viewStatus');
+function syncThree(){if(threeView&&boardView.value==='3d'&&state)threeView.update(state,selected,semantic,document.querySelector('#labels').value)}
+function show3d(on){
+ board.hidden=on;stage3d.hidden=!on;
+ for(const id of ['flip3d','top3d','home3d'])document.getElementById(id).hidden=!on;
+ if(threeView)threeView.setActive(on);
+}
+function fallback3d(message){viewRequest++;boardView.value='2d';show3d(false);viewStatus.textContent=message}
+boardView.onchange=async()=>{
+ const serial=++viewRequest;
+ if(boardView.value==='2d'){show3d(false);viewStatus.textContent='';return}
+ viewStatus.textContent='Loading 3D renderer…';
+ try{
+  if(!threeView){
+   const module=await import('/web/board3d.js');
+   if(serial!==viewRequest)return;
+   threeView=module.createBoard3D({stage:stage3d,canvas:document.querySelector('#threeCanvas'),labels:document.querySelector('#threeLabels'),info:document.querySelector('#threeInfo'),choose,fail:message=>fallback3d(message)});
+  }
+  if(serial!==viewRequest)return;
+  show3d(true);syncThree();viewStatus.textContent='3D tabletop active';
+ }catch(e){if(serial===viewRequest)fallback3d('3D unavailable; 2D remains playable. '+e.message)}
+};
+document.querySelector('#flip3d').onclick=()=>threeView?.flip();
+document.querySelector('#top3d').onclick=()=>threeView?.overhead();
+document.querySelector('#home3d').onclick=()=>threeView?.home();
 request('/api/state').then(s=>{state=s;document.querySelector('#opponent').value=s.opponent;render()}).catch(e=>status.textContent=e.message);
 </script></html>

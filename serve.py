@@ -19,6 +19,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200,game.state())
         elif self.path == "/":
             self.reply(200,(Path(__file__).parent/"web"/"index.html").read_bytes(),"text/html; charset=utf-8")
+        elif self.path == "/web/board3d.js":
+            self.reply(200,(Path(__file__).parent/"web"/"board3d.js").read_bytes(),"text/javascript; charset=utf-8")
         else:
             self.reply(404,{"error":"Not found"})
     def do_POST(self):
