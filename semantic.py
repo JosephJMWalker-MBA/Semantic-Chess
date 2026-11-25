@@ -1,5 +1,7 @@
 """Authoritative chess state and persistent semantic identities."""
 import chess
+import random
+import secrets
 
 ROWS = [
 "US:America CA:Canada MX:Mexico BR:Brazil GB-ENG:England FR:France DE:Germany IT:Italy",
@@ -16,13 +18,36 @@ for row, line in enumerate(ROWS):
         code, name = item.split(":")
         LOCATIONS[chess.square(col, 7-row)] = dict(code=code.lower(), name=name.replace("_"," "))
 
+# Curated visual-confusion groups; avoid edge AND corner adjacency.
+SIMILAR = [
+    {"au","nz","fj"}, {"co","ve","ec"}, {"id","pl","sg"},
+    {"ro","td"}, {"ie","it","mx"}, {"nl","ru","py"},
+    {"hu","ir","bg"}, {"no","is","dk","fi","se"},
+    {"eg","iq","sy"}, {"ma","tr","tn"}, {"jp","bd"},
+]
+def lottery(seed):
+    rng = random.Random(seed)
+    entries = list(LOCATIONS.values())
+    for _ in range(10000):
+        rng.shuffle(entries)
+        layout = dict(zip(chess.SQUARES, entries))
+        positions = {value["code"]: sq for sq,value in layout.items()}
+        groups = [[positions[c] for c in sorted(group) if c in positions] for group in SIMILAR]
+        if all(chess.square_distance(a,b) > 1 for group in groups
+               for i,a in enumerate(group) for b in group[i+1:]):
+            return {sq: dict(value) for sq,value in layout.items()}
+    raise RuntimeError("Unable to produce separated flag layout")
+
 NAMES = {7:"Rex Blake Carter Diana Arthur Elliot Graham Harris",
          6:"Jack Doug Fred Sam Luke Owen Max Ben",
          1:"Alice Beth Clara Daisy Eva Flora Grace Hope",
          0:"Miles Noah Caleb Eliza Henry Victor Ethan Leo"}
 
 class Game:
-    def __init__(self):
+    def __init__(self, seed=None, opponent="human"):
+        self.seed = secrets.randbits(32) if seed is None else seed
+        self.locations = lottery(self.seed)
+        self.opponent = opponent
         self.board = chess.Board()
         self.ids = {sq: {"id": chess.square_name(sq), "name": NAMES[chess.square_rank(sq)].split()[chess.square_file(sq)]}
                     for sq in self.board.piece_map()}
@@ -40,7 +65,7 @@ class Game:
             capture_sq = dst - 8 if b.turn else dst + 8
         captured = self.ids.get(capture_sq) if b.is_capture(m) else None
         event = dict(uci=uci, san=b.san(m), actor=actor.copy(),
-                     origin=LOCATIONS[src]["name"], destination=LOCATIONS[dst]["name"],
+                     origin=self.locations[src]["name"], destination=self.locations[dst]["name"],
                      captured=captured.copy() if captured else None,
                      promotion=chess.piece_name(m.promotion) if m.promotion else None)
         if b.is_castling(m):
@@ -50,7 +75,7 @@ class Game:
             rook_dst = chess.square(5 if kingside else 3,rank)
             rook = self.ids.pop(rook_src)
             self.ids[rook_dst] = rook
-            event["rook"] = dict(actor=rook.copy(), origin=LOCATIONS[rook_src]["name"], destination=LOCATIONS[rook_dst]["name"])
+            event["rook"] = dict(actor=rook.copy(), origin=self.locations[rook_src]["name"], destination=self.locations[rook_dst]["name"])
         if captured:
             self.ids.pop(capture_sq)
         self.ids.pop(src)
@@ -63,13 +88,13 @@ class Game:
     def state(self):
         b = self.board
         outcome = b.outcome()
-        return dict(fen=b.fen(), turn="white" if b.turn else "black",
+        return dict(seed=self.seed, opponent=self.opponent, fen=b.fen(), turn="white" if b.turn else "black",
                     check=b.is_check(), result=outcome.result() if outcome else None,
                     legal=[m.uci() for m in b.legal_moves] if not outcome else [],
-                    squares=[dict(square=chess.square_name(s), **LOCATIONS[s],
+                    squares=[dict(square=chess.square_name(s), **self.locations[s],
                                   piece=dict(**self.ids[s], symbol=b.piece_at(s).symbol(),
                                              capability=chess.piece_name(b.piece_type_at(s)),
                                              self_actualized=bool(b.promoted & chess.BB_SQUARES[s]))
                                   if s in self.ids else None)
-                             for s in sorted(LOCATIONS, key=lambda s: (-chess.square_rank(s),chess.square_file(s)))],
+                             for s in sorted(self.locations, key=lambda s: (-chess.square_rank(s),chess.square_file(s)))],
                     history=self.history)

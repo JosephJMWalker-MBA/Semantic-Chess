@@ -1,6 +1,6 @@
 import unittest
 import chess
-from semantic import Game, LOCATIONS
+from semantic import Game, LOCATIONS, SIMILAR, lottery
 
 class SemanticTests(unittest.TestCase):
     def fixture(self, fen, identities):
@@ -8,6 +8,25 @@ class SemanticTests(unittest.TestCase):
         g.board=chess.Board(fen)
         g.ids={chess.parse_square(s):dict(id=s,name=n) for s,n in identities.items()}
         return g
+    def test_lottery(self):
+        for seed in range(20):
+            a=lottery(seed)
+            self.assertEqual(a,lottery(seed))
+            self.assertEqual(len({x["code"] for x in a.values()}),64)
+            positions={v["code"]:s for s,v in a.items()}
+            for group in SIMILAR:
+                present=[positions[c] for c in group if c in positions]
+                for i,x in enumerate(present):
+                    for y in present[i+1:]:
+                        self.assertGreater(chess.square_distance(x,y),1)
+        self.assertNotEqual(lottery(1),lottery(2))
+    def test_mapping_history(self):
+        g=Game(seed=42)
+        layout=g.locations.copy()
+        event=g.move("e2e4")
+        self.assertEqual(event["origin"],layout[chess.E2]["name"])
+        self.assertEqual(event["destination"],layout[chess.E4]["name"])
+        self.assertEqual(g.locations,layout)
     def test_initial(self):
         g=Game()
         self.assertEqual(len(LOCATIONS),64)
