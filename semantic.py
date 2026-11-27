@@ -1,5 +1,6 @@
 """Authoritative chess state and persistent semantic identities."""
 import chess
+import chess.pgn
 import random
 import secrets
 
@@ -44,7 +45,14 @@ NAMES = {7:"Rex Blake Carter Diana Arthur Elliot Graham Harris",
          0:"Miles Noah Caleb Eliza Henry Victor Ethan Leo"}
 
 class Game:
-    def __init__(self, seed=None, opponent="human"):
+    def __init__(self, seed=None, opponent="human", difficulty="standard"):
+        if seed is not None and (type(seed) is not int or not 0 <= seed < 2**32):
+            raise ValueError("Invalid lottery seed")
+        if opponent not in ("human", "stockfish"):
+            raise ValueError("Invalid opponent")
+        if difficulty not in ("casual", "standard", "challenge"):
+            raise ValueError("Invalid difficulty")
+        self.difficulty = difficulty
         self.seed = secrets.randbits(32) if seed is None else seed
         self.locations = lottery(self.seed)
         self.opponent = opponent
@@ -54,6 +62,8 @@ class Game:
         self.history = []
 
     def move(self, uci):
+        if not isinstance(uci, str):
+            raise ValueError('Expected move notation')
         m = chess.Move.from_uci(uci)
         b = self.board
         if b.is_game_over() or m not in b.legal_moves:
@@ -85,11 +95,58 @@ class Game:
         assert set(self.ids) == set(b.piece_map())
         return event
 
+    def record(self):
+        """Portable versioned record; history is derived by legal replay."""
+        return dict(version=1, seed=self.seed, opponent=self.opponent,
+                    difficulty=self.difficulty,
+                    layout={chess.square_name(s): v["code"] for s,v in self.locations.items()},
+                    moves=[e["uci"] for e in self.history])
+
+    @classmethod
+    def from_record(cls, record):
+        if not isinstance(record, dict) or type(record.get("version")) is not int or record["version"] != 1:
+            raise ValueError("Unsupported game record")
+        seed = record["seed"]
+        if type(seed) is not int or not 0 <= seed < 2**32:
+            raise ValueError("Invalid saved seed")
+        game = cls(seed, record["opponent"], record["difficulty"])
+        layout = record["layout"]
+        by_code = {v["code"]:v for v in LOCATIONS.values()}
+        if (not isinstance(layout, dict) or set(layout) != set(chess.SQUARE_NAMES)
+                or any(not isinstance(v,str) for v in layout.values())
+                or set(layout.values()) != set(by_code)):
+            raise ValueError("Invalid saved layout")
+        game.locations = {chess.parse_square(s):dict(by_code[c]) for s,c in layout.items()}
+        moves = record["moves"]
+        if not isinstance(moves, list) or len(moves)>18000:
+            raise ValueError("Invalid move history")
+        for move in moves:
+            game.move(move)
+        return game
+
+    def undo(self):
+        if not self.history:
+            raise ValueError("No moves to undo")
+        record = self.record()
+        # Against Stockfish return to the previous human decision.
+        count = 2 if self.opponent == "stockfish" and self.board.turn and len(self.history)>1 else 1
+        record["moves"] = record["moves"][:-count]
+        return self.from_record(record)
+
+    def pgn(self):
+        game = chess.pgn.Game.from_board(self.board)
+        game.headers["Event"] = "Semantic Chess"
+        game.headers["White"] = "Human / White"
+        game.headers["Black"] = "Stockfish" if self.opponent=="stockfish" else "Human / Black"
+        game.headers["SemanticSeed"] = str(self.seed)
+        return str(game) + "\n"
+
     def state(self):
         b = self.board
         outcome = b.outcome()
-        return dict(seed=self.seed, opponent=self.opponent, fen=b.fen(), turn="white" if b.turn else "black",
+        return dict(seed=self.seed, opponent=self.opponent, difficulty=self.difficulty, fen=b.fen(), turn="white" if b.turn else "black",
                     check=b.is_check(), result=outcome.result() if outcome else None,
+                    termination=outcome.termination.name.lower().replace("_"," ") if outcome else None,
                     legal=[m.uci() for m in b.legal_moves] if not outcome else [],
                     squares=[dict(square=chess.square_name(s), **self.locations[s],
                                   piece=dict(**self.ids[s], symbol=b.piece_at(s).symbol(),

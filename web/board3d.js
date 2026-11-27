@@ -94,7 +94,12 @@ export function createBoard3D({stage,canvas,labels,info,choose,fail}){
   paintTiles();const seen=new Set();
   for(const s of state.squares){
    const p=s.piece,{x,z}=coord(s.square),mark=marks.get(s.square);
-   const legal=selected&&state.legal.some(m=>m.startsWith(selected+s.square));mark.visible=Boolean(legal||selected===s.square);mark.material.color.set(selected===s.square?0xffd05a:0x55ffad);
+   const legal=selected&&state.legal.some(m=>m.startsWith(selected+s.square));
+   const last=state.history.at(-1)?.uci;
+   const previous=last&&(last.slice(0,2)===s.square||last.slice(2,4)===s.square);
+   const capture=legal&&(s.piece||state.squares.find(x=>x.square===selected)?.piece?.capability==='pawn'&&selected[0]!==s.square[0]);
+   mark.visible=Boolean(legal||selected===s.square||previous);
+   mark.material.color.set(selected===s.square?0xffd05a:legal?(capture?0xffb86b:0x55ffad):0x81c6ff);
    if(!p)continue;seen.add(p.id);let entry=pieces.get(p.id);
    if(entry&&entry.symbol!==p.symbol){removePiece(entry);pieces.delete(p.id);entry=null}
    if(!entry){
@@ -153,5 +158,5 @@ export function createBoard3D({stage,canvas,labels,info,choose,fail}){
  canvas.addEventListener('pointerleave',()=>{hover=null;info.textContent='';draw()});
  canvas.addEventListener('wheel',e=>{e.preventDefault();distance=THREE.MathUtils.clamp(distance*Math.exp(e.deltaY*.001),11,23);draw()},{passive:false});
  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();failed=true;fail('WebGL context lost; reload to retry 3D. 2D remains playable.')});
- return {update,setActive(on){active=on&&!failed;if(active){resize();draw()}},flip(){azimuth+=Math.PI;draw()},overhead(){elevation=1.565;draw()},home(){azimuth=0;elevation=1.03;distance=16.5;draw()}};
+ return {update,isFailed:()=>failed,setActive(on){active=on&&!failed;if(active){resize();draw()}},flip(){azimuth+=Math.PI;draw()},overhead(){elevation=1.565;draw()},home(){azimuth=0;elevation=1.03;distance=16.5;draw()}};
 }
